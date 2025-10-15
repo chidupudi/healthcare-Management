@@ -15,6 +15,44 @@ app.get('/', (req, res) => {
   res.send('Backend server is running!');
 });
 
+// Health check endpoint for Kubernetes liveness probe
+app.get('/health', (req, res) => {
+  res.status(200).json({
+    status: 'healthy',
+    timestamp: new Date().toISOString(),
+    service: 'healthcare-backend'
+  });
+});
+
+// Readiness check endpoint for Kubernetes readiness probe
+app.get('/ready', async (req, res) => {
+  try {
+    // Check if MongoDB is connected
+    if (mongoose.connection.readyState === 1) {
+      res.status(200).json({
+        status: 'ready',
+        database: 'connected',
+        timestamp: new Date().toISOString(),
+        service: 'healthcare-backend'
+      });
+    } else {
+      res.status(503).json({
+        status: 'not ready',
+        database: 'disconnected',
+        timestamp: new Date().toISOString(),
+        service: 'healthcare-backend'
+      });
+    }
+  } catch (error) {
+    res.status(503).json({
+      status: 'not ready',
+      error: error.message,
+      timestamp: new Date().toISOString(),
+      service: 'healthcare-backend'
+    });
+  }
+});
+
 // MongoDB connection
 mongoose.connect('mongodb://localhost:27017/health', {
   useNewUrlParser: true,

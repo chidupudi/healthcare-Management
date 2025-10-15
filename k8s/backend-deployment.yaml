@@ -1,0 +1,71 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: healthcare-backend
+  labels:
+    app: healthcare-backend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: healthcare-backend
+  template:
+    metadata:
+      labels:
+        app: healthcare-backend
+    spec:
+      containers:
+      - name: backend
+        image: healthcare-backend:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 5000
+        env:
+        - name: PORT
+          value: "5000"
+        - name: MONGODB_URI
+          value: "mongodb://mongodb-service:27017/health"
+
+        # Startup Probe - allows slow-starting containers to initialize
+        # This runs first and blocks liveness/readiness probes until it succeeds
+        startupProbe:
+          httpGet:
+            path: /health
+            port: 5000
+          initialDelaySeconds: 0
+          periodSeconds: 10
+          failureThreshold: 30  # 30 * 10 = 300 seconds (5 minutes) to start
+          successThreshold: 1
+          timeoutSeconds: 5
+
+        # Liveness Probe - checks if the application is alive
+        # If this fails, Kubernetes will restart the container
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 5000
+          initialDelaySeconds: 15
+          periodSeconds: 20
+          failureThreshold: 3
+          successThreshold: 1
+          timeoutSeconds: 5
+
+        # Readiness Probe - checks if the application is ready to serve traffic
+        # If this fails, the pod is removed from the service endpoints
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 5000
+          initialDelaySeconds: 5
+          periodSeconds: 10
+          failureThreshold: 3
+          successThreshold: 1
+          timeoutSeconds: 5
+
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"

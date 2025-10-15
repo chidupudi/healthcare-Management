@@ -1,0 +1,79 @@
+# Test Pod with Intentional Health Check Failure
+# This deployment helps you observe Kubernetes probe behavior
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: healthcare-backend-test-failure
+  labels:
+    app: healthcare-backend-test
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: healthcare-backend-test
+  template:
+    metadata:
+      labels:
+        app: healthcare-backend-test
+    spec:
+      containers:
+      - name: backend
+        image: healthcare-backend:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 5000
+        env:
+        - name: PORT
+          value: "5000"
+        - name: MONGODB_URI
+          value: "mongodb://mongodb-service:27017/health"
+
+        # Aggressive liveness probe for testing failures
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 5000
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          failureThreshold: 2  # Fails quickly for testing
+          successThreshold: 1
+          timeoutSeconds: 2
+
+        # Aggressive readiness probe for testing
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 5000
+          initialDelaySeconds: 2
+          periodSeconds: 5
+          failureThreshold: 2  # Fails quickly for testing
+          successThreshold: 1
+          timeoutSeconds: 2
+
+---
+# Instructions to simulate failure:
+#
+# 1. Deploy this test pod:
+#    kubectl apply -f k8s/test-health-failure.yaml
+#
+# 2. Watch the pod status in real-time:
+#    kubectl get pods -w -l app=healthcare-backend-test
+#
+# 3. In another terminal, observe events:
+#    kubectl get events --watch
+#
+# 4. To simulate failure, exec into the pod and stop the process:
+#    kubectl exec -it <pod-name> -- sh
+#    kill 1  (This will terminate the main process)
+#
+# 5. Or to simulate readiness failure without killing:
+#    - Modify the /ready endpoint to return 503
+#    - Or disconnect MongoDB to make readiness fail
+#
+# 6. Observe Kubernetes behavior:
+#    - Readiness failure: Pod removed from service (Not Ready)
+#    - Liveness failure: Pod restarted after threshold
+#
+# 7. Cleanup when done:
+#    kubectl delete -f k8s/test-health-failure.yaml
