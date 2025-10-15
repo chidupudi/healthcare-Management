@@ -1,7 +1,8 @@
 const express = require('express');
-const mongoose = require('mongoose');
 const cors = require('cors');
 const bcrypt = require('bcryptjs');
+const fs = require('fs');
+const path = require('path');
 
 const app = express();
 const PORT = 5000; // Port specified directly
@@ -10,9 +11,74 @@ const PORT = 5000; // Port specified directly
 app.use(cors()); // Allow requests from your frontend's IP
 app.use(express.json()); // Parse JSON requests
 
+// Data directory setup
+const DATA_DIR = path.join(__dirname, 'data');
+if (!fs.existsSync(DATA_DIR)) {
+  fs.mkdirSync(DATA_DIR);
+}
+
+// File paths
+const FILES = {
+  users: path.join(DATA_DIR, 'users.json'),
+  appointments: path.join(DATA_DIR, 'appointments.json'),
+  medicalRecords: path.join(DATA_DIR, 'medicalRecords.json'),
+  billings: path.join(DATA_DIR, 'billings.json'),
+  counters: path.join(DATA_DIR, 'counters.json')
+};
+
+// Helper functions for file storage
+function readData(filePath, defaultValue = []) {
+  try {
+    if (fs.existsSync(filePath)) {
+      const data = fs.readFileSync(filePath, 'utf8');
+      return JSON.parse(data);
+    }
+  } catch (error) {
+    console.error(`Error reading ${filePath}:`, error);
+  }
+  return defaultValue;
+}
+
+function writeData(filePath, data) {
+  try {
+    fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf8');
+  } catch (error) {
+    console.error(`Error writing ${filePath}:`, error);
+  }
+}
+
+// Load data from files
+let users = readData(FILES.users, []);
+let appointments = readData(FILES.appointments, []);
+let medicalRecords = readData(FILES.medicalRecords, []);
+let billings = readData(FILES.billings, []);
+
+// Load counters
+const counters = readData(FILES.counters, {
+  userIdCounter: 1,
+  appointmentIdCounter: 1,
+  medicalRecordIdCounter: 1,
+  billingIdCounter: 1
+});
+
+let userIdCounter = counters.userIdCounter;
+let appointmentIdCounter = counters.appointmentIdCounter;
+let medicalRecordIdCounter = counters.medicalRecordIdCounter;
+let billingIdCounter = counters.billingIdCounter;
+
+// Save counters function
+function saveCounters() {
+  writeData(FILES.counters, {
+    userIdCounter,
+    appointmentIdCounter,
+    medicalRecordIdCounter,
+    billingIdCounter
+  });
+}
+
 // Root route
 app.get('/', (req, res) => {
-  res.send('Backend server is running!');
+  res.send('Backend server is running! (File-based storage mode)');
 });
 
 // Health check endpoint for Kubernetes liveness probe
@@ -20,79 +86,27 @@ app.get('/health', (req, res) => {
   res.status(200).json({
     status: 'healthy',
     timestamp: new Date().toISOString(),
-    service: 'healthcare-backend'
+    service: 'healthcare-backend',
+    storage: 'file-based'
   });
 });
 
 // Readiness check endpoint for Kubernetes readiness probe
-app.get('/ready', async (req, res) => {
-  try {
-    // Check if MongoDB is connected
-    if (mongoose.connection.readyState === 1) {
-      res.status(200).json({
-        status: 'ready',
-        database: 'connected',
-        timestamp: new Date().toISOString(),
-        service: 'healthcare-backend'
-      });
-    } else {
-      res.status(503).json({
-        status: 'not ready',
-        database: 'disconnected',
-        timestamp: new Date().toISOString(),
-        service: 'healthcare-backend'
-      });
+app.get('/ready', (req, res) => {
+  // Always ready since we don't depend on external database
+  res.status(200).json({
+    status: 'ready',
+    storage: 'file-based',
+    timestamp: new Date().toISOString(),
+    service: 'healthcare-backend',
+    data: {
+      users: users.length,
+      appointments: appointments.length,
+      medicalRecords: medicalRecords.length,
+      billings: billings.length
     }
-  } catch (error) {
-    res.status(503).json({
-      status: 'not ready',
-      error: error.message,
-      timestamp: new Date().toISOString(),
-      service: 'healthcare-backend'
-    });
-  }
+  });
 });
-
-// MongoDB connection
-mongoose.connect('mongodb://localhost:27017/health', {
-  useNewUrlParser: true,
-  useUnifiedTopology: true
-})
-  .then(() => console.log('MongoDB connected'))
-  .catch(err => console.error('MongoDB connection error:', err));
-
-// Define schemas
-const userSchema = new mongoose.Schema({
-  username: { type: String, required: true, unique: true },
-  email: { type: String, required: true, unique: true },
-  password: { type: String, required: true },
-});
-
-
-const appointmentSchema = new mongoose.Schema({
-  patientName: String,
-  date: Date,
-  time: String,
-  doctor: String,
-});
-const medicalRecordSchema = new mongoose.Schema({
-  patientName: String,
-  condition: String,
-  treatment: String,
-});
-
-const billingSchema = new mongoose.Schema({
-  patientName: String,
-  amount: Number,
-  paymentMethod: String,
-});
-
-// Define models
-const User = mongoose.model('User', userSchema);
-
-const Appointment = mongoose.model('Appointment', appointmentSchema);
-const MedicalRecord = mongoose.model('MedicalRecord', medicalRecordSchema);
-const Billing = mongoose.model('Billing', billingSchema);
 
 // User registration route
 app.post('/api/signup', async (req, res) => {
@@ -105,19 +119,33 @@ app.post('/api/signup', async (req, res) => {
   }
 
   try {
-    const existingUser = await User.findOne({ email });
+    // Check if user already exists
+    const existingUser = users.find(u => u.email === email);
     if (existingUser) {
       return res.status(400).json({ message: 'Email already in use' });
     }
 
+    // Hash password
     const hashedPassword = await bcrypt.hash(password, 10);
-    const user = new User({ username, email, password: hashedPassword });
 
-    await user.save();
-    res.status(201).send('User registered successfully!');
+    // Create new user
+    const newUser = {
+      id: userIdCounter++,
+      username,
+      email,
+      password: hashedPassword,
+      createdAt: new Date().toISOString()
+    };
+
+    users.push(newUser);
+    writeData(FILES.users, users);
+    saveCounters();
+
+    console.log(`User registered: ${username} (Total users: ${users.length})`);
+    res.status(201).json({ message: 'User registered successfully!', userId: newUser.id });
   } catch (error) {
     console.error('Error during signup:', error);
-    res.status(500).json({ message: 'Error registering user', error });
+    res.status(500).json({ message: 'Error registering user', error: error.message });
   }
 });
 
@@ -126,85 +154,155 @@ app.post('/api/login', async (req, res) => {
   const { email, password } = req.body;
 
   try {
+    // Admin login
     if (email === 'admin' && password === 'admin123') {
       return res.status(200).json({ message: 'Admin login successful', redirectTo: '/admin' });
     }
 
-    const user = await User.findOne({ email });
+    // Find user
+    const user = users.find(u => u.email === email);
 
     if (!user) {
       return res.status(401).json({ message: 'Invalid email or password' });
     }
 
+    // Verify password
     const isPasswordValid = await bcrypt.compare(password, user.password);
 
     if (isPasswordValid) {
-      res.status(200).json({ message: 'Login successful' });
+      res.status(200).json({
+        message: 'Login successful',
+        username: user.username
+      });
     } else {
       res.status(401).json({ message: 'Invalid email or password' });
     }
   } catch (error) {
-    res.status(500).json({ message: 'Error logging in', error });
+    console.error('Error during login:', error);
+    res.status(500).json({ message: 'Error logging in', error: error.message });
   }
 });
 
-
+// Get all users route
+app.get('/api/users', (req, res) => {
+  try {
+    // Return users without passwords
+    const safeUsers = users.map(({ id, username, email, createdAt }) => ({
+      id,
+      username,
+      email,
+      createdAt
+    }));
+    res.status(200).json(safeUsers);
+  } catch (error) {
+    res.status(500).json({ message: 'Error fetching users', error: error.message });
+  }
+});
 
 // Get all appointments route
-app.get('/api/appointments', async (req, res) => {
+app.get('/api/appointments', (req, res) => {
   try {
-    const appointments = await Appointment.find();
     res.status(200).json(appointments);
   } catch (error) {
-    res.status(500).json({ message: 'Error fetching appointments', error });
+    res.status(500).json({ message: 'Error fetching appointments', error: error.message });
   }
 });
 
 // Create new appointment route
-app.post('/api/appointments', async (req, res) => {
-  const appointment = new Appointment(req.body);
-
+app.post('/api/appointments', (req, res) => {
   try {
-    await appointment.save();
-    res.status(201).json(appointment);
+    const { patientName, date, time, doctor } = req.body;
+
+    const newAppointment = {
+      id: appointmentIdCounter++,
+      patientName,
+      date,
+      time,
+      doctor,
+      createdAt: new Date().toISOString()
+    };
+
+    appointments.push(newAppointment);
+    writeData(FILES.appointments, appointments);
+    saveCounters();
+
+    console.log(`Appointment created for ${patientName} (Total: ${appointments.length})`);
+    res.status(201).json(newAppointment);
   } catch (error) {
-    res.status(400).json({ message: 'Error creating appointment', error });
+    res.status(400).json({ message: 'Error creating appointment', error: error.message });
   }
 });
 
 // Create new medical record route
-app.post('/api/medicalrecords', async (req, res) => {
-  const record = new MedicalRecord(req.body);
-
+app.post('/api/medicalrecords', (req, res) => {
   try {
-    await record.save();
-    res.status(201).json(record);
+    const { patientName, condition, treatment } = req.body;
+
+    const newRecord = {
+      id: medicalRecordIdCounter++,
+      patientName,
+      condition,
+      treatment,
+      createdAt: new Date().toISOString()
+    };
+
+    medicalRecords.push(newRecord);
+    writeData(FILES.medicalRecords, medicalRecords);
+    saveCounters();
+
+    console.log(`Medical record created for ${patientName} (Total: ${medicalRecords.length})`);
+    res.status(201).json(newRecord);
   } catch (error) {
-    res.status(400).json({ message: 'Error creating medical record', error });
+    res.status(400).json({ message: 'Error creating medical record', error: error.message });
   }
 });
 
-app.get('/api/users', async (req, res) => {
+// Get all medical records route
+app.get('/api/medicalrecords', (req, res) => {
   try {
-    const users = await User.find({}, 'username email'); // Select only relevant fields
-    res.status(200).json(users);
+    res.status(200).json(medicalRecords);
   } catch (error) {
-    res.status(500).json({ message: 'Error fetching users', error });
+    res.status(500).json({ message: 'Error fetching medical records', error: error.message });
   }
 });
+
 // Create new billing record route
-app.post('/api/billings', async (req, res) => {
-  const billing = new Billing(req.body);
-
+app.post('/api/billings', (req, res) => {
   try {
-    await billing.save();
-    res.status(201).json(billing);
+    const { patientName, amount, paymentMethod } = req.body;
+
+    const newBilling = {
+      id: billingIdCounter++,
+      patientName,
+      amount,
+      paymentMethod,
+      createdAt: new Date().toISOString()
+    };
+
+    billings.push(newBilling);
+    writeData(FILES.billings, billings);
+    saveCounters();
+
+    console.log(`Billing record created for ${patientName} (Total: ${billings.length})`);
+    res.status(201).json(newBilling);
   } catch (error) {
-    res.status(400).json({ message: 'Error creating billing record', error });
+    res.status(400).json({ message: 'Error creating billing record', error: error.message });
+  }
+});
+
+// Get all billing records route
+app.get('/api/billings', (req, res) => {
+  try {
+    res.status(200).json(billings);
+  } catch (error) {
+    res.status(500).json({ message: 'Error fetching billing records', error: error.message });
   }
 });
 
 // Start the server
 app.listen(PORT, () => {
-  console.log(`Server is running on http:localhost:${PORT}`); // Use public IP address
+  console.log(`Server is running on http://localhost:${PORT}`);
+  console.log('Storage mode: File-based (no database required)');
+  console.log(`Data directory: ${DATA_DIR}`);
+  console.log('Data persists across server restarts');
 });

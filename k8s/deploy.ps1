@@ -11,7 +11,8 @@ Write-Host ""
 # Check if kubectl is available
 try {
     kubectl version --client --short | Out-Null
-} catch {
+}
+catch {
     Write-Host "Error: kubectl is not installed" -ForegroundColor Red
     exit 1
 }
@@ -19,7 +20,8 @@ try {
 # Check if cluster is accessible
 try {
     kubectl cluster-info | Out-Null
-} catch {
+}
+catch {
     Write-Host "Error: Cannot connect to Kubernetes cluster" -ForegroundColor Red
     Write-Host "Please ensure your cluster is running (e.g., 'minikube start')" -ForegroundColor Yellow
     exit 1
@@ -48,7 +50,8 @@ if ($context -like "*minikube*") {
     minikube image load healthcare-backend:latest
     Write-Host "✓ Image loaded to Minikube" -ForegroundColor Green
     Write-Host ""
-} else {
+}
+else {
     Write-Host "Step 2: Skipping Minikube load (not using Minikube)" -ForegroundColor Yellow
     Write-Host ""
 }
@@ -100,7 +103,8 @@ Write-Host "Testing /health endpoint..."
 try {
     $healthCheck = kubectl exec $podName -- wget -q -O- http://localhost:5000/health 2>$null
     Write-Host "✓ Health endpoint response: $healthCheck" -ForegroundColor Green
-} catch {
+}
+catch {
     Write-Host "✗ Health endpoint failed" -ForegroundColor Red
 }
 
@@ -108,7 +112,8 @@ Write-Host "Testing /ready endpoint..."
 try {
     $readyCheck = kubectl exec $podName -- wget -q -O- http://localhost:5000/ready 2>$null
     Write-Host "✓ Ready endpoint response: $readyCheck" -ForegroundColor Green
-} catch {
+}
+catch {
     Write-Host "✗ Ready endpoint failed" -ForegroundColor Red
 }
 Write-Host ""
@@ -135,7 +140,8 @@ if ($context -like "*minikube*") {
             Write-Host "  curl $serviceUrl/health"
             Write-Host "  curl $serviceUrl/ready"
         }
-    } catch {
+    }
+    catch {
         # Service URL not available yet
     }
 }
